@@ -29,6 +29,13 @@ import kotlinx.coroutines.withContext
  *   1. 连接 PlayerService 拿到 ExoPlayer 实例（bindService + LocalBinder）
  *   2. 维护当前 categoryId 下的 episode 列表 + 当前在播 episode
  *   3. 在 ExoPlayer 上挂 Listener，把 isPlaying / position / duration 桥接成 StateFlow 供 Compose 订阅
+ *   4. Next 跳下一未听集；播完（STATE_ENDED）自动 mark played + advance
+ *
+ * 状态机：
+ *   - episodes: 当前 categoryId 下所有 episode（按 pubDate desc）
+ *   - currentEpisode: 当前在播
+ *   - isPlaying / positionMs / durationMs: 跟 ExoPlayer 实时同步
+ *   - hasNext: 是否还有"早于当前 + 未听"的集（决定 Next 按钮灰不灰）
  */
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -66,9 +73,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
+            // 拿到 duration（prepare 完成后才有）
             val p = player ?: return
             if (state == Player.STATE_READY) {
                 _durationMs.value = if (p.duration > 0) p.duration else 0L
+            }
+            if (state == Player.STATE_ENDED) {
+                // 播完：mark played 并自动跳下一集
+                onPlaybackEnded()
             }
         }
     }
@@ -159,6 +171,44 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Next：跳到下一未听集。
+     * 规则：在所有 episodes 中，pubDate 比当前更早的、未听的，取 pubDate 最大的（即"再早一点"的下一集）。
+     */
+    fun next() {
+        val cur = _currentEpisode.value ?: return
+        val candidate = _episodes.value
+            .filter { !it.isPlayed && it.pubDate < cur.pubDate }
+            .maxByOrNull { it.pubDate }
+            ?: return
+        selectEpisode(candidate, autoplay = true)
+    }
+
+    /** Next 按钮是否可用 */
+    fun hasNext(): Boolean {
+        val cur = _currentEpisode.value ?: return false
+        return _episodes.value.any { !it.isPlayed && it.pubDate < cur.pubDate }
+    }
+
+    /** STATE_ENDED 触发：mark played + advance */
+    private fun onPlaybackEnded() {
+        val cur = _currentEpisode.value ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.markPlayed(cur.guid) }
+            // 刷新本地列表以便 hasNext 重新计算
+            categoryId?.let { _episodes.value = withContext(Dispatchers.IO) { repo.list(it) } }
+            // 自动跳下一集（如果有）
+            val candidate = _episodes.value
+                .filter { !it.isPlayed && it.pubDate < cur.pubDate }
+                .maxByOrNull { it.pubDate }
+            if (candidate != null) {
+                selectEpisode(candidate, autoplay = true)
+            } else {
+                _isPlaying.value = false
+            }
+        }
+    }
+
+    /**
      * 进度轮询：ExoPlayer 不会主动回调每秒进度，需自己 poll。
      * 仅在 isPlaying=true 时启动，避免空转耗电。
      */
@@ -173,6 +223,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 val cur = _currentEpisode.value
                 if (cur != null && p.currentPosition - cur.lastPositionMs > 30_000) {
                     withContext(Dispatchers.IO) { repo.savePosition(cur.guid, p.currentPosition) }
+                }
+                // 80% 阈值 mark played（兜底，避免 STATE_ENDED 没触发）
+                if (cur != null && !cur.isPlayed && p.duration > 0 &&
+                    p.currentPosition >= p.duration * 0.8
+                ) {
+                    withContext(Dispatchers.IO) { repo.markPlayed(cur.guid) }
                 }
                 delay(500)
             }

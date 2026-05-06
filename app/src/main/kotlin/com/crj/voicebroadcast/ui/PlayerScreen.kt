@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.material.Text
 import com.crj.voicebroadcast.playback.PlayerViewModel
@@ -48,7 +48,7 @@ import com.crj.voicebroadcast.ui.theme.WineRed
  * - 圆形进度环：暖橙激活，浅咖底（跟 ExoPlayer 真实 position 同步）
  * - 中央大圆按钮（酒红），白色 PlayArrow，toggle 真生效
  * - 左下 "List" 文字按钮 → 回 CategoryScreen
- * - 右下 "Next" 文字按钮 → 跳下一集（暂占位，后续 commit 接 ViewModel）
+ * - 右下 "Next" 文字按钮 → 跳下一未听集（无下一集时灰掉）
  *
  * 数据流：
  *   Compose ←(StateFlow)— PlayerViewModel ←(Player.Listener)— ExoPlayer ←(Binder)— PlayerService
@@ -85,8 +85,12 @@ fun PlayerScreen(
     val isPlaying by vm.isPlaying.collectAsState()
     val positionMs by vm.positionMs.collectAsState()
     val durationMs by vm.durationMs.collectAsState()
+    val episodes by vm.episodes.collectAsState()
 
     val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val canNext = current?.let { cur ->
+        episodes.any { !it.isPlayed && it.pubDate < cur.pubDate }
+    } ?: false
 
     Box(
         modifier = Modifier
@@ -178,7 +182,7 @@ fun PlayerScreen(
                 modifier = Modifier.clickable { onListClick() }
             )
         }
-        // 右下 Next（占位，下一 commit 接逻辑）
+        // 右下 Next（无下一集时灰）
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -187,10 +191,11 @@ fun PlayerScreen(
         ) {
             Text(
                 text = "Next",
-                color = MutedCoffee,
+                color = if (canNext) WineRed else MutedCoffee,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 11.sp
+                fontSize = 11.sp,
+                modifier = Modifier.clickable(enabled = canNext) { vm.next() }
             )
         }
     }
