@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.crj.voicebroadcast.data.Categories
@@ -39,7 +40,10 @@ import com.crj.voicebroadcast.ui.theme.WineRed
  * 每张卡片米白底 + 酒红边框 + 衬线大字标题。
  */
 @Composable
-fun HomeScreen(onCategoryClick: (Category) -> Unit) {
+fun HomeScreen(
+    loading: Boolean = false,
+    onCategoryClick: (Category) -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -85,6 +89,23 @@ fun HomeScreen(onCategoryClick: (Category) -> Unit) {
                     category = Categories.WORK_PLACEHOLDER,
                     modifier = Modifier.weight(1f),
                     onClick = {} // disabled
+                )
+            }
+        }
+
+        // 加载指示器（米白底已经是父 Box，悬浮在底部不挡卡片）
+        if (loading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 12.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    indicatorColor = WineRed,
+                    trackColor = MutedCoffee.copy(alpha = 0.25f),
+                    strokeWidth = 2.dp
                 )
             }
         }

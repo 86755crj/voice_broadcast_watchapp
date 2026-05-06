@@ -1,13 +1,13 @@
 package com.crj.voicebroadcast
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.lifecycleScope
 import com.crj.voicebroadcast.data.Categories
 import com.crj.voicebroadcast.data.EpisodeRepository
 import com.crj.voicebroadcast.ui.CategoryScreen
@@ -15,11 +15,18 @@ import com.crj.voicebroadcast.ui.HomeScreen
 import com.crj.voicebroadcast.ui.PlayerScreen
 import com.crj.voicebroadcast.ui.theme.VoiceBroadcastTheme
 import com.crj.voicebroadcast.work.SyncWorker
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 单 Activity，三屏切换用 sealed class state。
  * 不引 navigation library 减少 APK 体积。
+ *
+ * 启动加载策略：
+ *   - SyncWorker 后台每日同步注册（轻）
+ *   - 首启 RSS 拉取放到 Dispatchers.IO，不阻塞 UI
+ *   - 拉取期间 Home 屏显示 loading（米白底 + 酒红 ProgressIndicator）
+ *   - 单 cat 抛错只打日志，不让整个 UI crash
  */
 class MainActivity : ComponentActivity() {
 
@@ -32,24 +39,33 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 注册每日同步 worker
+        // 注册每日同步 worker（轻量，UI 线程 ok）
         SyncWorker.schedule(applicationContext)
-
-        // 进 Activity 立即拉一次 RSS（第一次启动让用户秒看到内容）
-        lifecycleScope.launch {
-            val repo = EpisodeRepository(applicationContext)
-            for (c in Categories.ALL.filter { it.enabled }) {
-                runCatching { repo.refresh(c) }
-            }
-        }
 
         setContent {
             VoiceBroadcastTheme {
                 var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+                var loading by remember { mutableStateOf(true) }
+
+                // 首启异步拉一次 RSS（IO 线程，不阻塞 UI）
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val repo = EpisodeRepository(applicationContext)
+                            for (c in Categories.ALL.filter { it.enabled }) {
+                                runCatching { repo.refresh(c) }
+                                    .onFailure { Log.w(TAG, "refresh ${c.id} failed", it) }
+                            }
+                        }
+                    }.onFailure { Log.e(TAG, "initial sync failed", it) }
+                    loading = false
+                }
+
                 when (val s = screen) {
-                    is Screen.Home -> HomeScreen(onCategoryClick = { cat ->
-                        screen = Screen.Category(cat.id)
-                    })
+                    is Screen.Home -> HomeScreen(
+                        loading = loading,
+                        onCategoryClick = { cat -> screen = Screen.Category(cat.id) }
+                    )
                     is Screen.Category -> CategoryScreen(
                         categoryId = s.id,
                         onEpisodeClick = { _ -> screen = Screen.Player(s.id) }
@@ -61,5 +77,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
