@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.crj.voicebroadcast"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.crj.voicebroadcast"
