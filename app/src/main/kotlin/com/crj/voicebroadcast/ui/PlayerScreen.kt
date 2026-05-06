@@ -103,6 +103,7 @@ fun PlayerScreen(
     val playbackSpeed by vm.playbackSpeed.collectAsState()
     val isFavorite by vm.isFavorite.collectAsState()
     val sleepRemain by vm.sleepTimerRemainingMs.collectAsState()
+    val downloadState by vm.downloadState.collectAsState()
 
     val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val canNext = current?.let { cur ->
@@ -163,30 +164,49 @@ fun PlayerScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 70.dp)
             )
             Spacer(Modifier.height(6.dp))
-            // 大圆酒红按钮（toggle 真接 ExoPlayer）
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(WineRed)
-                    .clickable(enabled = current != null && ready) { vm.togglePlayPause() },
-                contentAlignment = Alignment.Center
-            ) {
+            // 下载中：显示进度文字代替播放按钮；下载完成或失败 fallback 后回到正常按钮
+            val dl = downloadState
+            if (dl is PlayerViewModel.DownloadState.Downloading) {
                 Text(
-                    text = if (isPlaying) "II" else "▶",
-                    color = ParchmentBeige,
-                    fontFamily = FontFamily.Default,
+                    text = "下载中",
+                    color = WineRed,
+                    fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = formatBytes(dl.received, dl.total),
+                    color = DarkCoffee,
+                    fontFamily = FontFamily.Default,
+                    fontSize = 10.sp
+                )
+            } else {
+                // 大圆酒红按钮（toggle 真接 ExoPlayer）
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(WineRed)
+                        .clickable(enabled = current != null && ready) { vm.togglePlayPause() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isPlaying) "II" else "▶",
+                        color = ParchmentBeige,
+                        fontFamily = FontFamily.Default,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = formatTime(positionMs) + " / " + formatTime(durationMs),
+                    color = MutedCoffee,
+                    fontFamily = FontFamily.Default,
+                    fontSize = 9.sp
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = formatTime(positionMs) + " / " + formatTime(durationMs),
-                color = MutedCoffee,
-                fontFamily = FontFamily.Default,
-                fontSize = 9.sp
-            )
             // 倍速 / 定时器小提示（如果非 1.0x 或 sleep 在跑）
             if (playbackSpeed != 1.0f || (sleepRemain != null && (sleepRemain ?: 0) > 0)) {
                 Spacer(Modifier.height(2.dp))
@@ -592,4 +612,16 @@ private fun formatMinutes(ms: Long): String {
     val mm = totalSec / 60
     val ss = totalSec % 60
     return "%d:%02d".format(mm, ss)
+}
+
+/** 把字节数格式化成 "12.3 / 36.5 MB"，total<=0 时只显示 received */
+private fun formatBytes(received: Long, total: Long): String {
+    val mb = 1024.0 * 1024.0
+    val r = received / mb
+    return if (total > 0) {
+        val t = total / mb
+        "%.1f / %.1f MB".format(r, t)
+    } else {
+        "%.1f MB".format(r)
+    }
 }

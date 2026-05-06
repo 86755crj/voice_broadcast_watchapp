@@ -12,8 +12,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import android.net.Uri
 import com.crj.voicebroadcast.data.Episode
 import com.crj.voicebroadcast.data.EpisodeRepository
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -72,6 +74,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     // 定时关闭剩余毫秒；null 表示未启用，0 表示已到期
     private val _sleepTimerRemainingMs = MutableStateFlow<Long?>(null)
     val sleepTimerRemainingMs: StateFlow<Long?> = _sleepTimerRemainingMs.asStateFlow()
+
+    // 下载预热状态：进 Player 屏首次播该集时把整个 mp3 拉到本地，避免 LTE 流式 buffer 用尽
+    sealed class DownloadState {
+        object Idle : DownloadState()
+        data class Downloading(val received: Long, val total: Long) : DownloadState()
+        object Ready : DownloadState()
+        data class Failed(val reason: String) : DownloadState()
+    }
+    private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
+    val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
+
+    private var downloadJob: Job? = null
 
     // -------- 内部 --------
     private var player: ExoPlayer? = null
@@ -206,22 +220,60 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 切到指定 episode；autoplay=true 时立即播 */
+    /**
+     * 切到指定 episode；autoplay=true 时立即播。
+     *
+     * 预下载策略（修 LTE 流式 stall）：
+     *   1. localPath 存在且文件就在 → file:// 直接播，秒开
+     *   2. 否则启动 downloadWithProgress 把整集拉到本地 cache 目录，UI 走 Downloading 态
+     *   3. 下载完成后用 file:// 播；下载失败 fallback 到 enclosureUrl 流式（buffer 已加大）
+     */
     private fun selectEpisode(ep: Episode, autoplay: Boolean) {
         _currentEpisode.value = ep
         _positionMs.value = ep.lastPositionMs
         _durationMs.value = (ep.durationSec * 1000L).coerceAtLeast(0L)
         // 同步加心状态（每集独立）
         _isFavorite.value = favPrefs.getBoolean(ep.guid, false)
-        // 诊断日志：让用户能在 logcat 里看到断点续播是否生效
         Log.i(TAG, "resuming at ${ep.lastPositionMs}ms for ${ep.title.take(40)}")
+
+        // 取消上一集可能还在跑的下载
+        downloadJob?.cancel()
+
+        val localFile = ep.localPath?.takeIf { it.isNotEmpty() }?.let { File(it) }
+        if (localFile != null && localFile.exists() && localFile.length() > 0) {
+            // 已有本地缓存，直接播
+            _downloadState.value = DownloadState.Ready
+            playLocalOrUri(ep, Uri.fromFile(localFile).toString(), autoplay)
+            return
+        }
+
+        // 没缓存：启动预下载，期间 UI 显示进度
+        _downloadState.value = DownloadState.Downloading(0, 0)
+        downloadJob = viewModelScope.launch {
+            val path = withContext(Dispatchers.IO) {
+                repo.downloadWithProgress(ep) { received, total ->
+                    _downloadState.value = DownloadState.Downloading(received, total)
+                }
+            }
+            // 用户可能已经切到下一集，校验当前集没变才能动 player
+            if (_currentEpisode.value?.guid != ep.guid) return@launch
+            if (path != null) {
+                _downloadState.value = DownloadState.Ready
+                playLocalOrUri(ep, Uri.fromFile(File(path)).toString(), autoplay)
+            } else {
+                Log.w(TAG, "download failed for ${ep.title.take(40)}, fallback to streaming")
+                _downloadState.value = DownloadState.Failed("download failed, streaming")
+                playLocalOrUri(ep, ep.enclosureUrl, autoplay)
+            }
+        }
+    }
+
+    /** 真正把 mediaItem 装进 player 的内部 helper，统一断点续播 + 倍速 */
+    private fun playLocalOrUri(ep: Episode, uri: String, autoplay: Boolean) {
         val p = player ?: return
-        // 优先用本地缓存路径，没有则走网络
-        val uri = ep.localPath?.takeIf { it.isNotEmpty() } ?: ep.enclosureUrl
         p.setMediaItem(MediaItem.fromUri(uri))
         p.prepare()
         if (ep.lastPositionMs > 0) p.seekTo(ep.lastPositionMs)
-        // 应用当前倍速（切集会丢失上一首的 PlaybackParameters）
         p.setPlaybackSpeed(_playbackSpeed.value)
         p.playWhenReady = autoplay
     }
@@ -279,12 +331,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun togglePlayPause() {
         val p = player ?: return
         val ep = _currentEpisode.value ?: return
-        // 没 mediaItem（player 在新 bind 后还没 setMediaItem）的话，先装载
+        // 没 mediaItem（player 在新 bind 后还没 setMediaItem）的话，走预下载流程装载
         if (p.currentMediaItem == null) {
-            val uri = ep.localPath?.takeIf { it.isNotEmpty() } ?: ep.enclosureUrl
-            p.setMediaItem(MediaItem.fromUri(uri))
-            p.prepare()
-            if (ep.lastPositionMs > 0) p.seekTo(ep.lastPositionMs)
+            selectEpisode(ep, autoplay = true)
+            return
         }
         p.playWhenReady = !p.playWhenReady
     }

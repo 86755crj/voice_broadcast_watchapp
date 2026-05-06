@@ -57,4 +57,70 @@ class EpisodeRepository(private val ctx: Context) {
         dao.setLocalPath(ep.guid, target.absolutePath)
         target.absolutePath
     }
+
+    /**
+     * 带进度回调的下载（PlayerScreen 进入时用）。
+     * - 已存在直接返回路径，progress(total,total) 回调一次表示就绪
+     * - 边下边写入临时文件 .part，完成后 rename，断电不会留半截
+     * - progress 回调单位字节；total<=0 表示服务器没给 Content-Length
+     * - 失败返回 null（PlayerScreen 会 fallback 到流式 url）
+     */
+    suspend fun downloadWithProgress(
+        ep: Episode,
+        progress: (received: Long, total: Long) -> Unit
+    ): String? = withContext(Dispatchers.IO) {
+        if (!ep.localPath.isNullOrEmpty() && File(ep.localPath).exists()) {
+            val len = File(ep.localPath).length()
+            progress(len, len)
+            return@withContext ep.localPath
+        }
+        val baseDir = File(ctx.getExternalFilesDir(null), "cache/${ep.categoryId}").apply { mkdirs() }
+        val safeName = ep.guid.hashCode().toString().replace("-", "n") + ".mp3"
+        val target = File(baseDir, safeName)
+        val tmp = File(baseDir, "$safeName.part")
+
+        if (target.exists()) {
+            val len = target.length()
+            progress(len, len)
+            dao.setLocalPath(ep.guid, target.absolutePath)
+            return@withContext target.absolutePath
+        }
+
+        try {
+            val req = Request.Builder().url(ep.enclosureUrl).build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body ?: return@withContext null
+                val total = body.contentLength()
+                tmp.outputStream().use { os ->
+                    body.byteStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        var received = 0L
+                        var lastReport = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            os.write(buf, 0, n)
+                            received += n
+                            // 节流：每 256KB 才回调一次，避免 UI 抖
+                            if (received - lastReport > 256 * 1024) {
+                                progress(received, total)
+                                lastReport = received
+                            }
+                        }
+                        progress(received, total)
+                    }
+                }
+            }
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                return@withContext null
+            }
+            dao.setLocalPath(ep.guid, target.absolutePath)
+            target.absolutePath
+        } catch (e: Exception) {
+            tmp.delete()
+            null
+        }
+    }
 }
