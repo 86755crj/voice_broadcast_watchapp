@@ -100,8 +100,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 _durationMs.value = if (p.duration > 0) p.duration else 0L
             }
             if (state == Player.STATE_ENDED) {
-                // 播完：mark played 并自动跳下一集
-                onPlaybackEnded()
+                // STATE_ENDED 在 LTE buffer 耗尽 / 网络中断时会被 ExoPlayer 误触发。
+                // 用 95% 阈值校验：position 接近 duration 才算真播完，否则当作 buffer underrun，
+                // 重新 prepare + play 续接，避免几十秒就被误判结束、被 mark played。
+                val pos = p.currentPosition
+                val dur = p.duration
+                if (dur > 0 && pos >= (dur * 0.95).toLong()) {
+                    onPlaybackEnded()
+                } else {
+                    Log.w(
+                        TAG,
+                        "STATE_ENDED but pos=${pos}ms / dur=${dur}ms — treating as buffer underrun, retrying"
+                    )
+                    p.prepare()
+                    p.play()
+                }
             }
         }
     }

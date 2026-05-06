@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -33,7 +34,20 @@ class PlayerService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val p = ExoPlayer.Builder(this).build()
+        // Wear OS 6 在 LTE 下 ExoPlayer 默认 buffer 偏小（50s min），LTE 抖动 → buffer 用尽 →
+        // 进入 BUFFERING 状态，过短 stall 还可能被框架升级为 STATE_ENDED 误判。
+        // 把 min/max 拉到 3min/5min，让长 mp3（~40min）在 LTE 上有足够缓冲。
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs */                  180_000,
+                /* maxBufferMs */                  300_000,
+                /* bufferForPlaybackMs */            2_500,
+                /* bufferForPlaybackAfterRebufferMs */ 5_000
+            )
+            .build()
+        val p = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build()
         player = p
         session = MediaSession.Builder(this, p).build()
     }
