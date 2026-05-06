@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- VPS 47.115.56.9 是 HTTP（无 HTTPS 证书），明文允许 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">47.115.56.9</domain>
+        <domain includeSubdomains="true">uptu.cn</domain>
+    </domain-config>
+</network-security-config>

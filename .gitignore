@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+**/build/
+gradle-*.zip
+
+# Android
+local.properties
+captures/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# Java/Kotlin
+*.log
+hs_err_pid*

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">口播</string>
+    <string name="cat_morning">晨练简报</string>
+    <string name="cat_work">工作播报</string>
+    <string name="cat_work_locked">即将上线</string>
+    <string name="player_list">List</string>
+    <string name="player_next">Next</string>
+    <string name="empty_no_episodes">暂无节目，等待 06:30 同步</string>
+    <string name="loading">加载中</string>
+</resources>
