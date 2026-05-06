@@ -1,5 +1,6 @@
 package com.crj.voicebroadcast.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -12,75 +13,78 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Canvas
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.material.Text
-import com.crj.voicebroadcast.data.Episode
-import com.crj.voicebroadcast.data.EpisodeRepository
+import com.crj.voicebroadcast.playback.PlayerViewModel
 import com.crj.voicebroadcast.ui.theme.DarkCoffee
 import com.crj.voicebroadcast.ui.theme.MutedCoffee
 import com.crj.voicebroadcast.ui.theme.ParchmentBeige
 import com.crj.voicebroadcast.ui.theme.WarmOrange
 import com.crj.voicebroadcast.ui.theme.WineRed
-import kotlinx.coroutines.delay
 
 /**
  * Player 屏：
  * - 背景米白
- * - 圆形进度环：暖橙激活，浅咖底
- * - 中央大圆按钮（酒红），白色 PlayArrow
+ * - 圆形进度环：暖橙激活，浅咖底（跟 ExoPlayer 真实 position 同步）
+ * - 中央大圆按钮（酒红），白色 PlayArrow，toggle 真生效
  * - 左下 "List" 文字按钮 → 回 CategoryScreen
- * - 右下 "Next" 文字按钮 → 跳下一集
+ * - 右下 "Next" 文字按钮 → 跳下一集（暂占位，后续 commit 接 ViewModel）
+ *
+ * 数据流：
+ *   Compose ←(StateFlow)— PlayerViewModel ←(Player.Listener)— ExoPlayer ←(Binder)— PlayerService
  */
 @Composable
 fun PlayerScreen(
     categoryId: String,
-    onListClick: () -> Unit
+    onListClick: () -> Unit,
+    vm: PlayerViewModel = viewModel()
 ) {
     val ctx = LocalContext.current
-    val repo = remember { EpisodeRepository(ctx) }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    var current by remember { mutableStateOf<Episode?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var positionMs by remember { mutableStateOf(0L) }
-    var durationMs by remember { mutableStateOf(0L) }
-
-    // 启动时取下一集未听
-    LaunchedEffect(categoryId) {
-        current = repo.nextUnplayed(categoryId) ?: repo.list(categoryId).firstOrNull()
-        durationMs = (current?.durationSec ?: 0) * 1000L
-        positionMs = current?.lastPositionMs ?: 0L
-    }
-
-    // 模拟播放进度推进（实际应该用 ExoPlayer 回调；这里 UI 层 demo）
-    LaunchedEffect(isPlaying, current?.guid) {
-        while (isPlaying && current != null) {
-            delay(1000)
-            if (durationMs > 0) {
-                positionMs = (positionMs + 1000).coerceAtMost(durationMs)
-                if (positionMs >= durationMs * 0.8 && current?.isPlayed == false) {
-                    current?.guid?.let { repo.markPlayed(it) }
-                }
+    // 生命周期感知地 bind/unbind PlayerService
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> vm.bind(ctx)
+                Lifecycle.Event.ON_STOP -> vm.unbind(ctx)
+                else -> Unit
             }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    // 服务连上后再加载分类（loadCategory 内幂等）
+    val ready by vm.ready.collectAsState()
+    LaunchedEffect(categoryId, ready) {
+        if (ready) vm.loadCategory(categoryId)
+    }
+
+    val current by vm.currentEpisode.collectAsState()
+    val isPlaying by vm.isPlaying.collectAsState()
+    val positionMs by vm.positionMs.collectAsState()
+    val durationMs by vm.durationMs.collectAsState()
 
     val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
@@ -117,7 +121,7 @@ fun PlayerScreen(
             )
         }
 
-        // 中央：标题 + 大圆按钮
+        // 中央：标题 + 大圆按钮 + 时间
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -132,13 +136,13 @@ fun PlayerScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 36.dp)
             )
             Spacer(Modifier.height(8.dp))
-            // 大圆酒红按钮
+            // 大圆酒红按钮（toggle 真接 ExoPlayer）
             Box(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
                     .background(WineRed)
-                    .clickable(enabled = current != null) { isPlaying = !isPlaying },
+                    .clickable(enabled = current != null && ready) { vm.togglePlayPause() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -174,7 +178,7 @@ fun PlayerScreen(
                 modifier = Modifier.clickable { onListClick() }
             )
         }
-        // 右下 Next
+        // 右下 Next（占位，下一 commit 接逻辑）
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -183,17 +187,10 @@ fun PlayerScreen(
         ) {
             Text(
                 text = "Next",
-                color = WineRed,
+                color = MutedCoffee,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 11.sp,
-                modifier = Modifier.clickable {
-                    // 标记已听 + 切下一集
-                    current?.guid?.let {
-                        // 在 Composable 里不能直接 suspend，简单方案：reset state，
-                        // 真实跳过逻辑在 PlayerService 或 ViewModel
-                    }
-                }
+                fontSize = 11.sp
             )
         }
     }
