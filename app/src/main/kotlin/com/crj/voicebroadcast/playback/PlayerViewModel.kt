@@ -61,11 +61,31 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    // 播放倍速：0.8 / 1.0 / 1.25 / 1.5；UI 通过 setSpeed 改
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
+    // 当前 episode 是否被加心；持久化在 SharedPreferences 里（避免动 Room schema 引发迁移）
+    private val _isFavorite = MutableStateFlow(false)
+    val isFavorite: StateFlow<Boolean> = _isFavorite.asStateFlow()
+
+    // 定时关闭剩余毫秒；null 表示未启用，0 表示已到期
+    private val _sleepTimerRemainingMs = MutableStateFlow<Long?>(null)
+    val sleepTimerRemainingMs: StateFlow<Long?> = _sleepTimerRemainingMs.asStateFlow()
+
     // -------- 内部 --------
     private var player: ExoPlayer? = null
     private var bound = false
     private var positionPollJob: Job? = null
+    private var sleepTimerJob: Job? = null
     private var categoryId: String? = null
+
+    // 加心持久化：SharedPreferences key = guid, value = bool
+    private val favPrefs by lazy {
+        getApplication<Application>().getSharedPreferences(
+            "voicebroadcast_favorites", Context.MODE_PRIVATE
+        )
+    }
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) {
@@ -178,6 +198,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _currentEpisode.value = ep
         _positionMs.value = ep.lastPositionMs
         _durationMs.value = (ep.durationSec * 1000L).coerceAtLeast(0L)
+        // 同步加心状态（每集独立）
+        _isFavorite.value = favPrefs.getBoolean(ep.guid, false)
         // 诊断日志：让用户能在 logcat 里看到断点续播是否生效
         Log.i(TAG, "resuming at ${ep.lastPositionMs}ms for ${ep.title.take(40)}")
         val p = player ?: return
@@ -186,7 +208,58 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         p.setMediaItem(MediaItem.fromUri(uri))
         p.prepare()
         if (ep.lastPositionMs > 0) p.seekTo(ep.lastPositionMs)
+        // 应用当前倍速（切集会丢失上一首的 PlaybackParameters）
+        p.setPlaybackSpeed(_playbackSpeed.value)
         p.playWhenReady = autoplay
+    }
+
+    /** 设置倍速：0.8 / 1.0 / 1.25 / 1.5 */
+    fun setSpeed(speed: Float) {
+        _playbackSpeed.value = speed
+        player?.setPlaybackSpeed(speed)
+    }
+
+    /** 切换当前集的加心状态，写 SharedPreferences 持久化 */
+    fun toggleFavorite() {
+        val ep = _currentEpisode.value ?: return
+        val now = !_isFavorite.value
+        _isFavorite.value = now
+        favPrefs.edit().putBoolean(ep.guid, now).apply()
+    }
+
+    /**
+     * 启动定时关闭：minutes 分钟后暂停播放。
+     * 重复调用会取消上一个 timer，重新计时。
+     */
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        if (minutes <= 0) {
+            _sleepTimerRemainingMs.value = null
+            return
+        }
+        val totalMs = minutes * 60_000L
+        _sleepTimerRemainingMs.value = totalMs
+        sleepTimerJob = viewModelScope.launch {
+            val deadline = System.currentTimeMillis() + totalMs
+            while (true) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) {
+                    _sleepTimerRemainingMs.value = 0
+                    player?.playWhenReady = false
+                    flushPosition()
+                    break
+                }
+                _sleepTimerRemainingMs.value = remaining
+                delay(1000)
+            }
+        }
+    }
+
+    /** 取消定时关闭 */
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerRemainingMs.value = null
     }
 
     /** 中央按钮 toggle */
