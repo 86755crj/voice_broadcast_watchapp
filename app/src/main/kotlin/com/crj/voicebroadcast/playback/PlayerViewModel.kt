@@ -101,6 +101,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    // ExoPlayer 强制要求所有访问都在创建它的线程（Main）。
+    // Listener 回调本身就是 Main 线程，但里面要读 currentPosition / duration 等仍要小心；
+    // 这里所有逻辑只读 listener 已传入的参数 + 调度到 Main scope 上做后续动作。
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) {
             _isPlaying.value = playing
@@ -108,7 +111,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            // 拿到 duration（prepare 完成后才有）
+            // 拿到 duration（prepare 完成后才有）—— listener 回调本身在 Main 线程，安全
             val p = player ?: return
             if (state == Player.STATE_READY) {
                 _durationMs.value = if (p.duration > 0) p.duration else 0L
@@ -182,11 +185,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 把 ExoPlayer 当前 position 立即写入 DB（不等 30s 阈值）。
      * 用于 unbind / onStop 等可能马上被系统杀进程的关键时刻。
+     *
+     * 注意：必须在 Main 线程读 player.currentPosition——ExoPlayer 严格校验访问线程，
+     * 跨线程访问会抛 IllegalStateException 直接 crash 进程。
      */
     private fun flushPosition() {
         val p = player ?: return
         val cur = _currentEpisode.value ?: return
-        val pos = p.currentPosition
+        val pos = p.currentPosition  // 调用方都在 Main：unbind / onCleared / sleepTimer 协程已在 Main
         if (pos <= 0) return
         Log.i(TAG, "flushPosition: saving ${pos}ms for ${cur.title.take(40)}")
         viewModelScope.launch {
@@ -209,7 +215,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             (startGuid == null || _currentEpisode.value?.guid == startGuid)
         ) return
         categoryId = catId
-        viewModelScope.launch {
+        // 显式 Main：selectEpisode 内会 setMediaItem/prepare/seekTo（必须 Main 线程）
+        viewModelScope.launch(Dispatchers.Main) {
             val list = withContext(Dispatchers.IO) { repo.list(catId) }
             _episodes.value = list
             // 起始集优先级：startGuid 命中 > 未听最早集 > 最新一集
@@ -249,7 +256,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         // 没缓存：启动预下载，期间 UI 显示进度
         _downloadState.value = DownloadState.Downloading(0, 0)
-        downloadJob = viewModelScope.launch {
+        // 显式 Main：下载完后 playLocalOrUri 要操作 ExoPlayer
+        downloadJob = viewModelScope.launch(Dispatchers.Main) {
             val path = withContext(Dispatchers.IO) {
                 repo.downloadWithProgress(ep) { received, total ->
                     _downloadState.value = DownloadState.Downloading(received, total)
@@ -304,7 +312,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
         val totalMs = minutes * 60_000L
         _sleepTimerRemainingMs.value = totalMs
-        sleepTimerJob = viewModelScope.launch {
+        // 显式 Main：到点要操作 ExoPlayer（playWhenReady = false）必须在 Main 线程
+        sleepTimerJob = viewModelScope.launch(Dispatchers.Main) {
             val deadline = System.currentTimeMillis() + totalMs
             while (true) {
                 val remaining = deadline - System.currentTimeMillis()
@@ -361,7 +370,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** STATE_ENDED 触发：mark played + advance */
     private fun onPlaybackEnded() {
         val cur = _currentEpisode.value ?: return
-        viewModelScope.launch {
+        // 显式 Main：selectEpisode → playLocalOrUri 要在 Main 线程操 player
+        viewModelScope.launch(Dispatchers.Main) {
             withContext(Dispatchers.IO) { repo.markPlayed(cur.guid) }
             // 刷新本地列表以便 hasNext 重新计算
             categoryId?.let { _episodes.value = withContext(Dispatchers.IO) { repo.list(it) } }
@@ -380,23 +390,30 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 进度轮询：ExoPlayer 不会主动回调每秒进度，需自己 poll。
      * 仅在 isPlaying=true 时启动，避免空转耗电。
+     *
+     * 关键：所有 player.* 访问必须在 Main 线程。
+     *   - 显式声明 Dispatchers.Main 让协程主体跑在 Main 上（哪怕未来 viewModelScope 默认改成 IO 也安全）。
+     *   - DB 写操作单独 withContext(Dispatchers.IO)，且要把 player 读出来的本地变量传过去，
+     *     不要在 IO context 里再访问 player——否则跨线程 crash。
      */
     private fun startPositionPolling() {
         if (positionPollJob?.isActive == true) return
-        positionPollJob = viewModelScope.launch {
+        positionPollJob = viewModelScope.launch(Dispatchers.Main) {
             while (true) {
                 val p = player ?: break
-                _positionMs.value = p.currentPosition
-                if (p.duration > 0) _durationMs.value = p.duration
-                // 每 30s 持久化断点
+                // ----- Main 线程：读 ExoPlayer 状态 -----
+                val pos = p.currentPosition
+                val dur = p.duration
+                _positionMs.value = pos
+                if (dur > 0) _durationMs.value = dur
                 val cur = _currentEpisode.value
-                if (cur != null && p.currentPosition - cur.lastPositionMs > 30_000) {
-                    withContext(Dispatchers.IO) { repo.savePosition(cur.guid, p.currentPosition) }
+
+                // ----- IO 线程：DB 持久化（用上面读好的 snapshot，绝不在 IO 内访问 player） -----
+                if (cur != null && pos - cur.lastPositionMs > 30_000) {
+                    withContext(Dispatchers.IO) { repo.savePosition(cur.guid, pos) }
                 }
                 // 80% 阈值 mark played（兜底，避免 STATE_ENDED 没触发）
-                if (cur != null && !cur.isPlayed && p.duration > 0 &&
-                    p.currentPosition >= p.duration * 0.8
-                ) {
+                if (cur != null && !cur.isPlayed && dur > 0 && pos >= dur * 0.8) {
                     withContext(Dispatchers.IO) { repo.markPlayed(cur.guid) }
                 }
                 delay(500)
