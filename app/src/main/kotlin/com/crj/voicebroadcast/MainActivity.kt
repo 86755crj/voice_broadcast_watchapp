@@ -3,6 +3,7 @@ package com.crj.voicebroadcast
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,18 +63,31 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (val s = screen) {
-                    is Screen.Home -> HomeScreen(
-                        loading = loading,
-                        onCategoryClick = { cat -> screen = Screen.Category(cat.id) }
-                    )
-                    is Screen.Category -> CategoryScreen(
-                        categoryId = s.id,
-                        onEpisodeClick = { _ -> screen = Screen.Player(s.id) }
-                    )
-                    is Screen.Player -> PlayerScreen(
-                        categoryId = s.categoryId,
-                        onListClick = { screen = Screen.Category(s.categoryId) }
-                    )
+                    is Screen.Home -> {
+                        // Home 屏返回 → 系统默认（退到桌面），不拦截
+                        HomeScreen(
+                            loading = loading,
+                            onCategoryClick = { cat -> screen = Screen.Category(cat.id) }
+                        )
+                    }
+                    is Screen.Category -> {
+                        // Category 屏返回 → Home
+                        BackHandler(enabled = true) { screen = Screen.Home }
+                        CategoryScreen(
+                            categoryId = s.id,
+                            onEpisodeClick = { _ -> screen = Screen.Player(s.id) }
+                        )
+                    }
+                    is Screen.Player -> {
+                        // Player 屏返回 → Category（保留 categoryId 以便回到同一列表）
+                        BackHandler(enabled = true) {
+                            screen = Screen.Category(s.categoryId)
+                        }
+                        PlayerScreen(
+                            categoryId = s.categoryId,
+                            onListClick = { screen = Screen.Category(s.categoryId) }
+                        )
+                    }
                 }
             }
         }
