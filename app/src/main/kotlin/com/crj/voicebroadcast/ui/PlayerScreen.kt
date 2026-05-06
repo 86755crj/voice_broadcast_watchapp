@@ -234,12 +234,16 @@ fun PlayerScreen(
             }
         }
 
-        // 左中 List —— 圆屏左中点空间最大，文字按钮垂直居中
+        // ============ 4 角对称布局 ============
+        // 圆屏 384x384 / 466x466，圆心 (W/2, H/2)，半径约 192/233。
+        // 4 个按钮放 4 角（约 45°/135°/225°/315°），既不挡进度环也不挡中央播放区。
+        // 用 Alignment 4 角 + 对称 padding 控制：水平 30dp、垂直 50dp 让按钮落在 r≈140-155dp 弧上。
+        // 上左：List（左上）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 10.dp),
-            contentAlignment = Alignment.CenterStart
+                .padding(start = 30.dp, top = 50.dp),
+            contentAlignment = Alignment.TopStart
         ) {
             Text(
                 text = "List",
@@ -250,15 +254,15 @@ fun PlayerScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable { onListClick() }
-                    .padding(4.dp)
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
             )
         }
-        // 右中 Next（无下一集时灰）
+        // 上右：Next（右上，无下一集时灰）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(end = 10.dp),
-            contentAlignment = Alignment.CenterEnd
+                .padding(end = 30.dp, top = 50.dp),
+            contentAlignment = Alignment.TopEnd
         ) {
             Text(
                 text = "Next",
@@ -269,20 +273,20 @@ fun PlayerScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable(enabled = canNext) { vm.next() }
-                    .padding(4.dp)
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
             )
         }
 
-        // 左下：音量按钮（喇叭符号）
+        // 下左：音量按钮（喇叭符号）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 36.dp, bottom = 14.dp),
+                .padding(start = 30.dp, bottom = 50.dp),
             contentAlignment = Alignment.BottomStart
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
                     .border(1.dp, WineRed, CircleShape)
                     .clickable { showVolume = true },
@@ -293,21 +297,21 @@ fun PlayerScreen(
                     color = WineRed,
                     fontFamily = FontFamily.Default,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
+                    fontSize = 14.sp
                 )
             }
         }
 
-        // 中下：三点菜单
+        // 下右：三点菜单
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = 14.dp),
-            contentAlignment = Alignment.BottomCenter
+                .padding(end = 30.dp, bottom = 50.dp),
+            contentAlignment = Alignment.BottomEnd
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
                     .border(1.dp, WineRed, CircleShape)
                     .clickable { showMenu = true },
