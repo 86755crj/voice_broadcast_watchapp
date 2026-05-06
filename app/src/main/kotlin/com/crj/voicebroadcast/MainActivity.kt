@@ -34,7 +34,13 @@ class MainActivity : ComponentActivity() {
     private sealed class Screen {
         object Home : Screen()
         data class Category(val id: String) : Screen()
-        data class Player(val categoryId: String) : Screen()
+        /**
+         * Player 屏。
+         * @param categoryId 当前分类
+         * @param startGuid  从 CategoryScreen 点进来的具体集 guid；null 表示由 ViewModel
+         *                   走 nextUnplayed/firstOrNull 自选起始集
+         */
+        data class Player(val categoryId: String, val startGuid: String? = null) : Screen()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +81,10 @@ class MainActivity : ComponentActivity() {
                         BackHandler(enabled = true) { screen = Screen.Home }
                         CategoryScreen(
                             categoryId = s.id,
-                            onEpisodeClick = { _ -> screen = Screen.Player(s.id) }
+                            // 把点中的 episode guid 传给 Player，便于按断点续播
+                            onEpisodeClick = { ep ->
+                                screen = Screen.Player(s.id, startGuid = ep.guid)
+                            }
                         )
                     }
                     is Screen.Player -> {
@@ -85,6 +94,7 @@ class MainActivity : ComponentActivity() {
                         }
                         PlayerScreen(
                             categoryId = s.categoryId,
+                            startGuid = s.startGuid,
                             onListClick = { screen = Screen.Category(s.categoryId) }
                         )
                     }

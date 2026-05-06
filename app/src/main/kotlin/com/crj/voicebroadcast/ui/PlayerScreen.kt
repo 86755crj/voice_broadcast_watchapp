@@ -56,6 +56,7 @@ import com.crj.voicebroadcast.ui.theme.WineRed
 @Composable
 fun PlayerScreen(
     categoryId: String,
+    startGuid: String? = null,
     onListClick: () -> Unit,
     vm: PlayerViewModel = viewModel()
 ) {
@@ -76,9 +77,10 @@ fun PlayerScreen(
     }
 
     // 服务连上后再加载分类（loadCategory 内幂等）
+    // 把 startGuid 传下去，让 ViewModel 优先选用户点中的那一集，从断点续播
     val ready by vm.ready.collectAsState()
-    LaunchedEffect(categoryId, ready) {
-        if (ready) vm.loadCategory(categoryId)
+    LaunchedEffect(categoryId, startGuid, ready) {
+        if (ready) vm.loadCategory(categoryId, startGuid)
     }
 
     val current by vm.currentEpisode.collectAsState()

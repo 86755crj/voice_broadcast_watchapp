@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -118,6 +119,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** Activity onStop 调 */
     fun unbind(ctx: Context) {
         if (!bound) return
+        // 关键：unbind 前强制把当前位置写库一次，确保下次冷启能续播
+        // （poll 里只在差值 > 30s 时存，最后一次差值不够的进度不能丢）
+        flushPosition()
         try {
             player?.removeListener(playerListener)
             ctx.unbindService(serviceConnection)
@@ -128,15 +132,42 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         stopPositionPolling()
     }
 
-    /** PlayerScreen 进入时调，加载该分类下的 episodes 并选中起始集 */
-    fun loadCategory(catId: String) {
-        if (categoryId == catId && _episodes.value.isNotEmpty()) return
+    /**
+     * 把 ExoPlayer 当前 position 立即写入 DB（不等 30s 阈值）。
+     * 用于 unbind / onStop 等可能马上被系统杀进程的关键时刻。
+     */
+    private fun flushPosition() {
+        val p = player ?: return
+        val cur = _currentEpisode.value ?: return
+        val pos = p.currentPosition
+        if (pos <= 0) return
+        Log.i(TAG, "flushPosition: saving ${pos}ms for ${cur.title.take(40)}")
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.savePosition(cur.guid, pos) }
+        }
+    }
+
+    /**
+     * PlayerScreen 进入时调，加载该分类下的 episodes 并选中起始集。
+     *
+     * @param catId       分类 id
+     * @param startGuid   优先匹配此 guid 作为起始集（用户从 CategoryScreen 点进来的那一集）；
+     *                    匹配不到才回退到 nextUnplayed → firstOrNull
+     *
+     * 起始集选定后会从 DB 里读出 lastPositionMs 让 ExoPlayer seekTo，实现断点续播。
+     */
+    fun loadCategory(catId: String, startGuid: String? = null) {
+        // 同一分类、同一起始集已加载过：幂等返回
+        if (categoryId == catId && _episodes.value.isNotEmpty() &&
+            (startGuid == null || _currentEpisode.value?.guid == startGuid)
+        ) return
         categoryId = catId
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) { repo.list(catId) }
             _episodes.value = list
-            // 起始集：优先未听最早集，否则最新一集
-            val initial = withContext(Dispatchers.IO) { repo.nextUnplayed(catId) }
+            // 起始集优先级：startGuid 命中 > 未听最早集 > 最新一集
+            val initial = startGuid?.let { g -> list.firstOrNull { it.guid == g } }
+                ?: withContext(Dispatchers.IO) { repo.nextUnplayed(catId) }
                 ?: list.firstOrNull()
             initial?.let { selectEpisode(it, autoplay = false) }
         }
@@ -147,6 +178,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _currentEpisode.value = ep
         _positionMs.value = ep.lastPositionMs
         _durationMs.value = (ep.durationSec * 1000L).coerceAtLeast(0L)
+        // 诊断日志：让用户能在 logcat 里看到断点续播是否生效
+        Log.i(TAG, "resuming at ${ep.lastPositionMs}ms for ${ep.title.take(40)}")
         val p = player ?: return
         // 优先用本地缓存路径，没有则走网络
         val uri = ep.localPath?.takeIf { it.isNotEmpty() } ?: ep.enclosureUrl
@@ -241,8 +274,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        // ViewModel 销毁前再保险一次：进程被杀前写库
+        flushPosition()
         stopPositionPolling()
         // 注意：不主动 release player，因为 PlayerService 拥有它；ViewModel 只是引用持有者
         super.onCleared()
+    }
+
+    companion object {
+        private const val TAG = "PlayerVM"
     }
 }
