@@ -151,9 +151,9 @@ fun PlayerScreen(
         val centerBtnDiameter = w * 0.26f     // 中央按钮直径 ≈ 60dp（r ≈ 30dp，占 w 的 0.13）
         val iconBtnDiameter = w * 0.134f      // 4 icon 圆框直径 ≈ 31dp（r 占 w 的 0.067）
         val iconCenterDist = w * 0.36f        // 4 icon 距圆心 ≈ 84dp
-        val titleSp = (w.value * 0.075f).sp   // 标题字号 ≈ 17sp
+        val titleSp = (w.value * 0.064f).sp   // V3.2 标题字号 ≈ 15sp（缩一档）
         val timeSp = (w.value * 0.052f).sp    // 时间字号 ≈ 12sp
-        val titleOffsetY = -(w * 0.30f)       // 标题距中心向上 ≈ 70dp
+        val titleOffsetY = -(w * 0.26f)       // V3.2 标题距中心向上 ≈ 61dp（往下移 9dp）
         val timeOffsetY = w * 0.22f           // 时间距中心向下 ≈ 51dp
         val hintOffsetY = w * 0.30f           // 倍速/定时器提示位置
         // 4 icon 三角函数硬编码
@@ -683,13 +683,18 @@ private fun androidx.compose.foundation.layout.BoxScope.IconButton(
     }
 }
 
+/**
+ * V3.2: 4 个 icon 内的 vector 整体缩到圆框 ~65%（所有比例系数乘 0.7），
+ * 让 vector 与圆框之间留出更舒适的内边距，避免视觉拥挤。
+ */
+
 /** List icon：3 条水平线。按 Canvas 实际尺寸相对绘制（icon 自适应圆框直径）。 */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawListIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val halfLen = size.width * 0.34f
-    val gap = size.height * 0.22f
-    val sw = size.width * 0.075f
+    val halfLen = size.width * 0.238f      // V3.2: 0.34 * 0.7
+    val gap = size.height * 0.154f         // V3.2: 0.22 * 0.7
+    val sw = size.width * 0.0525f          // V3.2: 0.075 * 0.7
     for (dy in listOf(-gap, 0f, gap)) {
         drawLine(
             color = WineRed,
@@ -705,9 +710,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawListIcon() {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNextIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val triLeft = -size.width * 0.31f
-    val triRight = size.width * 0.18f
-    val triHalfH = size.height * 0.31f
+    val triLeft = -size.width * 0.217f     // V3.2: 0.31 * 0.7
+    val triRight = size.width * 0.126f     // V3.2: 0.18 * 0.7
+    val triHalfH = size.height * 0.217f    // V3.2: 0.31 * 0.7
     val triPath = Path().apply {
         moveTo(cx + triLeft, cy - triHalfH)
         lineTo(cx + triRight, cy)
@@ -715,13 +720,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNextIcon() {
         close()
     }
     drawPath(triPath, color = WineRed)
-    val barX = size.width * 0.28f
-    val barHalfH = size.height * 0.34f
+    val barX = size.width * 0.196f         // V3.2: 0.28 * 0.7
+    val barHalfH = size.height * 0.238f    // V3.2: 0.34 * 0.7
     drawLine(
         color = WineRed,
         start = Offset(cx + barX, cy - barHalfH),
         end = Offset(cx + barX, cy + barHalfH),
-        strokeWidth = size.width * 0.08f,
+        strokeWidth = size.width * 0.056f, // V3.2: 0.08 * 0.7
         cap = StrokeCap.Round
     )
 }
@@ -732,27 +737,28 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVolumeIcon() {
     val cy = size.height / 2f
     val w = size.width
     val h = size.height
+    // V3.2: 所有坐标系数 * 0.7
     val horn = Path().apply {
-        moveTo(cx + (-0.34f) * w, cy + (-0.18f) * h)
-        lineTo(cx + (-0.10f) * w, cy + (-0.18f) * h)
-        lineTo(cx + 0.13f * w, cy + (-0.34f) * h)
-        lineTo(cx + 0.13f * w, cy + 0.34f * h)
-        lineTo(cx + (-0.10f) * w, cy + 0.18f * h)
-        lineTo(cx + (-0.34f) * w, cy + 0.18f * h)
+        moveTo(cx + (-0.238f) * w, cy + (-0.126f) * h)
+        lineTo(cx + (-0.070f) * w, cy + (-0.126f) * h)
+        lineTo(cx + 0.091f * w, cy + (-0.238f) * h)
+        lineTo(cx + 0.091f * w, cy + 0.238f * h)
+        lineTo(cx + (-0.070f) * w, cy + 0.126f * h)
+        lineTo(cx + (-0.238f) * w, cy + 0.126f * h)
         close()
     }
     drawPath(horn, color = WineRed)
     val wave = Path().apply {
-        moveTo(cx + 0.23f * w, cy + (-0.18f) * h)
+        moveTo(cx + 0.161f * w, cy + (-0.126f) * h)
         quadraticBezierTo(
-            cx + 0.36f * w, cy,
-            cx + 0.23f * w, cy + 0.18f * h
+            cx + 0.252f * w, cy,
+            cx + 0.161f * w, cy + 0.126f * h
         )
     }
     drawPath(
         wave,
         color = WineRed,
-        style = Stroke(width = w * 0.05f, cap = StrokeCap.Round)
+        style = Stroke(width = w * 0.035f, cap = StrokeCap.Round)
     )
 }
 
@@ -760,8 +766,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVolumeIcon() {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMenuIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val dotR = size.width * 0.09f
-    val gap = size.width * 0.31f
+    val dotR = size.width * 0.063f         // V3.2: 0.09 * 0.7
+    val gap = size.width * 0.217f          // V3.2: 0.31 * 0.7
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx - gap, cy))
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx, cy))
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx + gap, cy))
