@@ -236,12 +236,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      *   3. 下载完成后用 file:// 播；下载失败 fallback 到 enclosureUrl 流式（buffer 已加大）
      */
     private fun selectEpisode(ep: Episode, autoplay: Boolean) {
+        // V3.4 修：已听完（>=95% duration）的 episode 重新选中时从头开始，避免落在结尾秒变 ENDED
+        val durMs = (ep.durationSec * 1000L).coerceAtLeast(0L)
+        val resumeAt = if (durMs > 0 && ep.lastPositionMs >= (durMs * 0.95).toLong()) 0L else ep.lastPositionMs
         _currentEpisode.value = ep
-        _positionMs.value = ep.lastPositionMs
-        _durationMs.value = (ep.durationSec * 1000L).coerceAtLeast(0L)
+        _positionMs.value = resumeAt
+        _durationMs.value = durMs
         // 同步加心状态（每集独立）
         _isFavorite.value = favPrefs.getBoolean(ep.guid, false)
-        Log.i(TAG, "resuming at ${ep.lastPositionMs}ms for ${ep.title.take(40)}")
+        Log.i(TAG, "resuming at ${resumeAt}ms (raw=${ep.lastPositionMs}ms) for ${ep.title.take(40)}")
 
         // 取消上一集可能还在跑的下载
         downloadJob?.cancel()
@@ -281,7 +284,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val p = player ?: return
         p.setMediaItem(MediaItem.fromUri(uri))
         p.prepare()
-        if (ep.lastPositionMs > 0) p.seekTo(ep.lastPositionMs)
+        // V3.4：用 _positionMs（已经过 selectEpisode 里"已听完→0"的归零处理），不再直读 ep.lastPositionMs
+        val seekAt = _positionMs.value
+        if (seekAt > 0) p.seekTo(seekAt)
         p.setPlaybackSpeed(_playbackSpeed.value)
         p.playWhenReady = autoplay
     }
@@ -345,27 +350,41 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             selectEpisode(ep, autoplay = true)
             return
         }
-        p.playWhenReady = !p.playWhenReady
+        // V3.4 修：已 STATE_ENDED 时 play() 是 no-op，必须先 seekTo(0) 才能重播
+        when {
+            p.isPlaying -> p.pause()
+            p.playbackState == Player.STATE_ENDED -> {
+                p.seekTo(0)
+                p.play()
+            }
+            else -> p.play()
+        }
     }
 
     /**
-     * Next：跳到下一未听集。
-     * 规则：在所有 episodes 中，pubDate 比当前更早的、未听的，取 pubDate 最大的（即"再早一点"的下一集）。
+     * Next：按 RSS 时间序跳到下一集（V3.4 放宽——不管 played 状态，循环回最新）。
+     *
+     * 规则：episodes 按 pubDate desc 排序后，找当前集的索引：
+     *   - 在列表里 → 取下一项（更老的一集）
+     *   - 已是最老 → 循环回到最新（首项）
+     *   - 当前集不在列表（罕见）→ 选首项
+     * 解决"播 May 6 时所有更早 episode 都已 played → next null → Next 按钮死"问题。
      */
     fun next() {
         val cur = _currentEpisode.value ?: return
-        val candidate = _episodes.value
-            .filter { !it.isPlayed && it.pubDate < cur.pubDate }
-            .maxByOrNull { it.pubDate }
-            ?: return
+        val sorted = _episodes.value.sortedByDescending { it.pubDate }
+        if (sorted.isEmpty()) return
+        val idx = sorted.indexOfFirst { it.guid == cur.guid }
+        val candidate = when {
+            idx < 0 -> sorted.first()
+            idx + 1 < sorted.size -> sorted[idx + 1]
+            else -> sorted.first()  // 已是最老 → 循环到最新
+        }
         selectEpisode(candidate, autoplay = true)
     }
 
-    /** Next 按钮是否可用 */
-    fun hasNext(): Boolean {
-        val cur = _currentEpisode.value ?: return false
-        return _episodes.value.any { !it.isPlayed && it.pubDate < cur.pubDate }
-    }
+    /** Next 按钮是否可用：列表非空就能点（V3.4 放宽，配合循环 next） */
+    fun hasNext(): Boolean = _episodes.value.isNotEmpty()
 
     /** STATE_ENDED 触发：mark played + advance */
     private fun onPlaybackEnded() {

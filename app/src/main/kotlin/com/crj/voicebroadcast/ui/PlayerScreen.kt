@@ -115,9 +115,8 @@ fun PlayerScreen(
     val downloadState by vm.downloadState.collectAsState()
 
     val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
-    val canNext = current?.let { cur ->
-        episodes.any { !it.isPlayed && it.pubDate < cur.pubDate }
-    } ?: false
+    // V3.4：Next 按钮放宽——只要列表非空就能点（按 RSS 时间序循环，听完一遍回到最新）
+    val canNext = episodes.isNotEmpty()
 
     // 弹窗状态
     var showVolume by remember { mutableStateOf(false) }
@@ -150,11 +149,11 @@ fun PlayerScreen(
         val ringStroke = w * 0.038f           // 进度环 stroke ≈ 9dp
         val centerBtnDiameter = w * 0.26f     // 中央按钮直径 ≈ 60dp（r ≈ 30dp，占 w 的 0.13）
         val iconBtnDiameter = w * 0.134f      // 4 icon 圆框直径 ≈ 31dp（r 占 w 的 0.067）
-        val iconCenterDist = w * 0.30f        // V3.3 4 icon 距圆心 ≈ 70dp（84→70，给进度环留 30dp 空隙）
+        val iconCenterDist = w * 0.33f        // V3.4 4 icon 距圆心 ≈ 77dp（70→77，icon 稍向外移）
         val titleSp = (w.value * 0.064f).sp   // V3.2 标题字号 ≈ 15sp（缩一档）
         val timeSp = (w.value * 0.052f).sp    // 时间字号 ≈ 12sp
         val titleOffsetY = -(w * 0.26f)       // V3.2 标题距中心向上 ≈ 61dp（往下移 9dp）
-        val timeOffsetY = w * 0.16f           // V3.3 时间距中心向下 ≈ 37dp（51→37，往上 14dp 避免被 7点/5点 icon 覆盖）
+        val timeOffsetY = w * 0.18f           // V3.4 时间距中心向下 ≈ 42dp（37→42，icon 外移后下挪一点呼吸空间）
         val hintOffsetY = w * 0.30f           // 倍速/定时器提示位置
         // 4 icon 三角函数硬编码
         val sin210 = -0.5f; val cos210 = -0.866f
