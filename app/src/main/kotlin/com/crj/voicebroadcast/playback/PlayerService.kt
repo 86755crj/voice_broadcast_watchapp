@@ -130,7 +130,7 @@ class PlayerService : MediaSessionService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("晨练简报")
             .setContentText("正在播放")
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setStyle(MediaStyleNotificationHelper.MediaStyle(session))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
