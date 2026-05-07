@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -124,35 +125,48 @@ fun PlayerScreen(
     var showSpeed by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
 
-    // V3 mock: 进度环加粗到 7.2dp（svg 9px@480 = 0.8 比例）+ 暖橙弧 + 米白边圆点。
-    // 中央暂停按钮放大到 r=46.4dp（svg 58px），4 个 icon 圆框 r=23.2dp（svg 29px），
-    // 距圆心 132dp（svg 165px）等距分布在 9 / 3 / 7 / 5 点位置。
-    // 标题：单行紧凑，"$pubDate $categoryName"；时间：按钮下方 Serif 灰咖。
+    // V3.1 修复：用 BoxWithConstraints 取真实屏宽 dp（466x466 / density 2.0 ≈ 233dp），
+    // 所有尺寸用相对比例（占 w 的百分比），保证 Galaxy Watch Ultra 等真机不被推出屏幕。
+    // 标题日期改用 "M月d日" 短格式，避免 11 字符被截。
     val categoryName = remember(categoryId) { Categories.byId(categoryId)?.name ?: "" }
     val titleText = remember(current?.pubDate, categoryName) {
         val cur = current
         if (cur != null) {
-            val day = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(cur.pubDate))
+            val day = SimpleDateFormat("M月d日", Locale.CHINA).format(Date(cur.pubDate))
             if (categoryName.isNotEmpty()) "$day $categoryName" else day
         } else {
             categoryName.ifEmpty { "暂无节目" }
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(ParchmentBeige),
         contentAlignment = Alignment.Center
     ) {
+        // ---- 相对单位（基于真实屏宽 dp） ----
+        val w = maxWidth                      // 圆屏宽 ≈ 233dp
+        val ringStroke = w * 0.038f           // 进度环 stroke ≈ 9dp
+        val centerBtnDiameter = w * 0.26f     // 中央按钮直径 ≈ 60dp（r ≈ 30dp，占 w 的 0.13）
+        val iconBtnDiameter = w * 0.134f      // 4 icon 圆框直径 ≈ 31dp（r 占 w 的 0.067）
+        val iconCenterDist = w * 0.36f        // 4 icon 距圆心 ≈ 84dp
+        val titleSp = (w.value * 0.075f).sp   // 标题字号 ≈ 17sp
+        val timeSp = (w.value * 0.052f).sp    // 时间字号 ≈ 12sp
+        val titleOffsetY = -(w * 0.30f)       // 标题距中心向上 ≈ 70dp
+        val timeOffsetY = w * 0.22f           // 时间距中心向下 ≈ 51dp
+        val hintOffsetY = w * 0.30f           // 倍速/定时器提示位置
+        // 4 icon 三角函数硬编码
+        val sin210 = -0.5f; val cos210 = -0.866f
+        val sin150 =  0.5f; val cos150 = -0.866f
+
         // ===== 1) 进度环（外圈）+ 进度小圆点 =====
-        // svg 半径 216@480 → 0.45*minDim；stroke 9@480 → 7.2dp
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 7.2.dp.toPx()
+            val stroke = ringStroke.toPx()
             val cx = size.width / 2f
             val cy = size.height / 2f
-            // 半径：svg 216/240 = 0.9，留 stroke/2 安全
-            val ringR = size.minDimension * 0.45f
+            // 半径：从外缘内缩，给小圆点留空间（外缘 - stroke - 4dp 边距）
+            val ringR = size.minDimension / 2f - stroke - 4.dp.toPx()
             val topLeft = Offset(cx - ringR, cy - ringR)
             val sz = Size(ringR * 2f, ringR * 2f)
             // 底环（深咖 18% alpha）
@@ -177,12 +191,12 @@ fun PlayerScreen(
                     style = Stroke(width = stroke, cap = StrokeCap.Round)
                 )
             }
-            // 进度小圆点：r=8@480 → 6.4dp，跟弧线相切，沿当前进度位置
+            // 进度小圆点
             val angleDeg = -90f + 360f * progress
             val rad = angleDeg * (Math.PI / 180f).toFloat()
             val dotX = cx + ringR * cos(rad)
             val dotY = cy + ringR * sin(rad)
-            val dotR = 6.4.dp.toPx()
+            val dotR = (w.toPx() * 0.027f)  // ≈ 6.3dp
             drawCircle(
                 color = WarmOrange,
                 radius = dotR,
@@ -196,13 +210,12 @@ fun PlayerScreen(
             )
         }
 
-        // ===== 2) 标题（顶部 ~30% 屏高）=====
-        // svg y=146@480 → 距顶 ~30%，对应 dp 偏移大约从中心向上 75dp
+        // ===== 2) 标题（顶部）=====
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(y = (-78).dp)
-                .padding(horizontal = 36.dp),
+                .offset(y = titleOffsetY)
+                .padding(horizontal = w * 0.12f),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -210,72 +223,71 @@ fun PlayerScreen(
                 color = DarkCoffee,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
+                fontSize = titleSp,
                 textAlign = TextAlign.Center,
                 maxLines = 1
             )
         }
 
-        // ===== 3) 中央暂停按钮（酒红 r=46.4dp + 白色 ||）=====
+        // ===== 3) 中央播放按钮 =====
         val dl = downloadState
         if (dl is PlayerViewModel.DownloadState.Downloading) {
-            // 下载中：原位置显示进度文字
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "下载中",
                     color = WineRed,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
+                    fontSize = timeSp
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = formatBytes(dl.received, dl.total),
                     color = DarkCoffee,
                     fontFamily = FontFamily.Default,
-                    fontSize = 11.sp
+                    fontSize = (w.value * 0.047f).sp
                 )
             }
         } else {
             Box(
                 modifier = Modifier
-                    .size(92.dp)  // r=46dp 直径 92dp
+                    .size(centerBtnDiameter)
                     .clip(CircleShape)
                     .background(WineRed)
                     .clickable(enabled = current != null && ready) { vm.togglePlayPause() },
                 contentAlignment = Alignment.Center
             ) {
-                Canvas(modifier = Modifier.size(60.dp)) {
+                Canvas(modifier = Modifier.size(centerBtnDiameter * 0.65f)) {
                     if (isPlaying) {
-                        // 两条白色矩形 ||：宽 8@480 → 6.4dp，高 46@480 → 36.8dp，间距 18@480 → 14.4dp
-                        val barW = 6.4.dp.toPx()
-                        val barH = 36.8.dp.toPx()
-                        val gap = 14.4.dp.toPx()
-                        val cx = size.width / 2f
-                        val cy = size.height / 2f
+                        // 两条白色矩形 ||
+                        val barW = size.width * 0.13f
+                        val barH = size.height * 0.62f
+                        val gap = size.width * 0.22f
+                        val cx2 = size.width / 2f
+                        val cy2 = size.height / 2f
                         val r = 2.dp.toPx()
                         drawRoundRect(
                             color = ParchmentBeige,
-                            topLeft = Offset(cx - gap / 2f - barW, cy - barH / 2f),
+                            topLeft = Offset(cx2 - gap / 2f - barW, cy2 - barH / 2f),
                             size = Size(barW, barH),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r)
                         )
                         drawRoundRect(
                             color = ParchmentBeige,
-                            topLeft = Offset(cx + gap / 2f, cy - barH / 2f),
+                            topLeft = Offset(cx2 + gap / 2f, cy2 - barH / 2f),
                             size = Size(barW, barH),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r)
                         )
                     } else {
-                        // 播放三角（暂停状态显示 ▶）
-                        val cx = size.width / 2f
-                        val cy = size.height / 2f
-                        val w = 28.dp.toPx()
-                        val h = 32.dp.toPx()
+                        // 播放三角 ▶
+                        val cx2 = size.width / 2f
+                        val cy2 = size.height / 2f
+                        val triW = size.width * 0.55f
+                        val triH = size.height * 0.62f
                         val path = Path().apply {
-                            moveTo(cx - w / 2f + 3.dp.toPx(), cy - h / 2f)
-                            lineTo(cx + w / 2f, cy)
-                            lineTo(cx - w / 2f + 3.dp.toPx(), cy + h / 2f)
+                            moveTo(cx2 - triW / 2f + 3.dp.toPx(), cy2 - triH / 2f)
+                            lineTo(cx2 + triW / 2f, cy2)
+                            lineTo(cx2 - triW / 2f + 3.dp.toPx(), cy2 + triH / 2f)
                             close()
                         }
                         drawPath(path, color = ParchmentBeige)
@@ -284,29 +296,29 @@ fun PlayerScreen(
             }
         }
 
-        // ===== 4) 时间显示（按钮下方 svg y=328@480 → 距中心 +70dp）=====
+        // ===== 4) 时间显示（按钮下方）=====
         if (dl !is PlayerViewModel.DownloadState.Downloading) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = 70.dp),
+                    .offset(y = timeOffsetY),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = formatTime(positionMs) + " / " + formatTime(durationMs),
                     color = DarkCoffee.copy(alpha = 0.7f),
                     fontFamily = FontFamily.Serif,
-                    fontSize = 13.sp
+                    fontSize = timeSp
                 )
             }
         }
 
-        // 倍速 / 定时器小提示（在时间下方）
+        // 倍速 / 定时器小提示
         if (playbackSpeed != 1.0f || (sleepRemain != null && (sleepRemain ?: 0) > 0)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = 92.dp),
+                    .offset(y = hintOffsetY),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -315,7 +327,7 @@ fun PlayerScreen(
                             text = "${playbackSpeed}x",
                             color = WarmOrange,
                             fontFamily = FontFamily.Default,
-                            fontSize = 9.sp
+                            fontSize = (w.value * 0.039f).sp
                         )
                     }
                     if (playbackSpeed != 1.0f && sleepRemain != null && (sleepRemain ?: 0) > 0) {
@@ -326,37 +338,37 @@ fun PlayerScreen(
                             text = "⏰" + formatMinutes(it),
                             color = WineRed,
                             fontFamily = FontFamily.Default,
-                            fontSize = 9.sp
+                            fontSize = (w.value * 0.039f).sp
                         )
                     }
                 }
             }
         }
 
-        // ===== 5) 4 个功能按钮（同尺寸 r=23.2dp，距圆心 132dp）=====
-        // 9 点 (List): offset (-132, 0)
-        // 3 点 (Next): offset (+132, 0)
-        // 7 点 (音量): svg (158,383) → 距中心 (-66, +152) → 0.8 → (-66dp, +152dp) ... 重新算：
-        //   svg 480: cx=240,cy=240. (158,383): dx=-82, dy=143. 0.8倍 → (-65.6, +114.4)dp
-        // 5 点 (菜单): svg (322,383): dx=+82, dy=+143. → (+65.6, +114.4)dp
+        // ===== 5) 4 个功能按钮（相对单位定位）=====
+        // dist = w * 0.36，4 个角度：270°(List)、90°(Next)、210°(音量)、150°(菜单)
         IconButton(
-            offsetX = (-132).dp, offsetY = 0.dp,
+            offsetX = -iconCenterDist, offsetY = 0.dp,
+            diameter = iconBtnDiameter,
             onClick = onListClick
         ) { drawListIcon() }
 
         IconButton(
-            offsetX = 132.dp, offsetY = 0.dp,
+            offsetX = iconCenterDist, offsetY = 0.dp,
+            diameter = iconBtnDiameter,
             enabled = canNext,
             onClick = { vm.next() }
         ) { drawNextIcon() }
 
         IconButton(
-            offsetX = (-65.6).dp, offsetY = 114.4.dp,
+            offsetX = iconCenterDist * sin210, offsetY = -iconCenterDist * cos210,
+            diameter = iconBtnDiameter,
             onClick = { showVolume = true }
         ) { drawVolumeIcon() }
 
         IconButton(
-            offsetX = 65.6.dp, offsetY = 114.4.dp,
+            offsetX = iconCenterDist * sin150, offsetY = -iconCenterDist * cos150,
+            diameter = iconBtnDiameter,
             onClick = { showMenu = true }
         ) { drawMenuIcon() }
     }
@@ -638,24 +650,23 @@ private fun MiniButton(label: String, onClick: () -> Unit) {
 /* -------- V3 icon 圆框 + 矢量绘制 -------- */
 
 /**
- * V3 mock 标准 icon 圆框：r=23.2dp（svg 29@480）的酒红轻框 + 内部矢量 icon。
- * offsetX/Y 是相对于父 Box 中心的位移（dp）。
+ * V3.1 修复：icon 圆框直径由调用方按相对屏宽传入（占 w * 0.134，约 31dp@233dp 屏宽）。
+ * offsetX/Y 是相对于父 Box 中心的位移（dp，已经是相对单位算好的）。
  *
  * 4 个按钮统一规格：
  * - 圆框 stroke 1.8dp WineRed alpha=0.4
- * - 内部 icon 用 Canvas drawScope 自绘
+ * - 内部 icon 用 Canvas drawScope 自绘（按 size 比例缩放）
  * - 全部酒红 #8B2635
  */
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.IconButton(
     offsetX: androidx.compose.ui.unit.Dp,
     offsetY: androidx.compose.ui.unit.Dp,
+    diameter: androidx.compose.ui.unit.Dp,
     enabled: Boolean = true,
     onClick: () -> Unit,
     drawIcon: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit
 ) {
-    val r = 23.2.dp
-    val diameter = r * 2  // 46.4dp
     Box(
         modifier = Modifier
             .align(Alignment.Center)
@@ -667,22 +678,18 @@ private fun androidx.compose.foundation.layout.BoxScope.IconButton(
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(diameter)) {
-            // alpha 让禁用时整体淡化
-            if (enabled) drawIcon() else {
-                // 禁用态：半透明
-                drawIcon()
-            }
+            if (enabled) drawIcon() else drawIcon()
         }
     }
 }
 
-/** List icon：3 条水平线（svg 26x18@480 → 0.8 = 20.8dp x 14.4dp） */
+/** List icon：3 条水平线。按 Canvas 实际尺寸相对绘制（icon 自适应圆框直径）。 */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawListIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val halfLen = 10.4.dp.toPx()
-    val gap = 7.2.dp.toPx()
-    val sw = 2.4.dp.toPx()
+    val halfLen = size.width * 0.34f
+    val gap = size.height * 0.22f
+    val sw = size.width * 0.075f
     for (dy in listOf(-gap, 0f, gap)) {
         drawLine(
             color = WineRed,
@@ -694,22 +701,27 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawListIcon() {
     }
 }
 
-/** Next icon：实心三角 ▶ + 右侧竖线 | （svg points (-12,-12)(7,0)(-12,12) + line x=11） */
+/** Next icon：实心三角 ▶ + 右侧竖线 | */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNextIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
+    val triLeft = -size.width * 0.31f
+    val triRight = size.width * 0.18f
+    val triHalfH = size.height * 0.31f
     val triPath = Path().apply {
-        moveTo(cx + (-9.6).dp.toPx(), cy + (-9.6).dp.toPx())
-        lineTo(cx + 5.6.dp.toPx(), cy)
-        lineTo(cx + (-9.6).dp.toPx(), cy + 9.6.dp.toPx())
+        moveTo(cx + triLeft, cy - triHalfH)
+        lineTo(cx + triRight, cy)
+        lineTo(cx + triLeft, cy + triHalfH)
         close()
     }
     drawPath(triPath, color = WineRed)
+    val barX = size.width * 0.28f
+    val barHalfH = size.height * 0.34f
     drawLine(
         color = WineRed,
-        start = Offset(cx + 8.8.dp.toPx(), cy - 10.4.dp.toPx()),
-        end = Offset(cx + 8.8.dp.toPx(), cy + 10.4.dp.toPx()),
-        strokeWidth = 2.56.dp.toPx(),
+        start = Offset(cx + barX, cy - barHalfH),
+        end = Offset(cx + barX, cy + barHalfH),
+        strokeWidth = size.width * 0.08f,
         cap = StrokeCap.Round
     )
 }
@@ -718,38 +730,38 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNextIcon() {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVolumeIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    // svg path: M -13 -7 L -4 -7 L 5 -13 L 5 13 L -4 7 L -13 7 Z (0.8 缩放)
+    val w = size.width
+    val h = size.height
     val horn = Path().apply {
-        moveTo(cx + (-10.4).dp.toPx(), cy + (-5.6).dp.toPx())
-        lineTo(cx + (-3.2).dp.toPx(), cy + (-5.6).dp.toPx())
-        lineTo(cx + 4.0.dp.toPx(), cy + (-10.4).dp.toPx())
-        lineTo(cx + 4.0.dp.toPx(), cy + 10.4.dp.toPx())
-        lineTo(cx + (-3.2).dp.toPx(), cy + 5.6.dp.toPx())
-        lineTo(cx + (-10.4).dp.toPx(), cy + 5.6.dp.toPx())
+        moveTo(cx + (-0.34f) * w, cy + (-0.18f) * h)
+        lineTo(cx + (-0.10f) * w, cy + (-0.18f) * h)
+        lineTo(cx + 0.13f * w, cy + (-0.34f) * h)
+        lineTo(cx + 0.13f * w, cy + 0.34f * h)
+        lineTo(cx + (-0.10f) * w, cy + 0.18f * h)
+        lineTo(cx + (-0.34f) * w, cy + 0.18f * h)
         close()
     }
     drawPath(horn, color = WineRed)
-    // 单道波纹：M 9 -7 Q 14 0 9 7
     val wave = Path().apply {
-        moveTo(cx + 7.2.dp.toPx(), cy + (-5.6).dp.toPx())
+        moveTo(cx + 0.23f * w, cy + (-0.18f) * h)
         quadraticBezierTo(
-            cx + 11.2.dp.toPx(), cy,
-            cx + 7.2.dp.toPx(), cy + 5.6.dp.toPx()
+            cx + 0.36f * w, cy,
+            cx + 0.23f * w, cy + 0.18f * h
         )
     }
     drawPath(
         wave,
         color = WineRed,
-        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+        style = Stroke(width = w * 0.05f, cap = StrokeCap.Round)
     )
 }
 
-/** 菜单 icon：3 个实心圆点（svg r=3.5，间距 12） */
+/** 菜单 icon：3 个实心圆点 */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMenuIcon() {
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val dotR = 2.8.dp.toPx()
-    val gap = 9.6.dp.toPx()
+    val dotR = size.width * 0.09f
+    val gap = size.width * 0.31f
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx - gap, cy))
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx, cy))
     drawCircle(color = WineRed, radius = dotR, center = Offset(cx + gap, cy))
