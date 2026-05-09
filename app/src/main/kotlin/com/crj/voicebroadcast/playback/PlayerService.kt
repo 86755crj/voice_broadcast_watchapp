@@ -118,7 +118,7 @@ class PlayerService : MediaSessionService() {
                     "播放",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "晨练简报正在播放"
+                    description = "晨跑简报正在播放"
                     setShowBadge(false)
                 }
                 nm.createNotificationChannel(ch)
@@ -128,7 +128,7 @@ class PlayerService : MediaSessionService() {
 
     private fun buildNotification(session: MediaSession): android.app.Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("晨练简报")
+            .setContentTitle("晨跑简报")
             .setContentText("正在播放")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setStyle(MediaStyleNotificationHelper.MediaStyle(session))

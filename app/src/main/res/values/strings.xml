@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">口播</string>
-    <string name="cat_morning">晨练简报</string>
+    <string name="cat_morning">晨跑简报</string>
     <string name="cat_work">工作播报</string>
     <string name="cat_work_locked">即将上线</string>
     <string name="player_list">List</string>
